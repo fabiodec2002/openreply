@@ -105,3 +105,38 @@ describe("Unified login authorization URL", () => {
     expect(getAuthorizationUrl("https://x.test/cb", "st")).toContain("instagram.com/oauth/authorize");
   });
 });
+
+describe("exchangeFacebookLoginCode", () => {
+  beforeEach(() => {
+    vi.stubEnv("INSTAGRAM_APP_ID", "111");
+    vi.stubEnv("FACEBOOK_APP_SECRET", "fb-secret-value");
+    vi.stubEnv("META_GRAPH_API_VERSION", "v25.0");
+  });
+
+  it("exchangeFacebookLoginCode sends the code to graph.facebook.com with FACEBOOK_APP_SECRET and returns the token", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ access_token: "sys-token", token_type: "bearer" }), { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { exchangeFacebookLoginCode } = await import("../lib/meta/oauth");
+    await expect(exchangeFacebookLoginCode("the-code", "https://x.test/cb")).resolves.toBe("sys-token");
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.origin + url.pathname).toBe("https://graph.facebook.com/v25.0/oauth/access_token");
+    expect(url.searchParams.get("client_id")).toBe("111");
+    expect(url.searchParams.get("client_secret")).toBe("fb-secret-value");
+    expect(url.searchParams.get("code")).toBe("the-code");
+    expect(url.searchParams.get("redirect_uri")).toBe("https://x.test/cb");
+    vi.unstubAllGlobals();
+  });
+
+  it("exchangeFacebookLoginCode throws Meta's error message, with no secret in it", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(JSON.stringify({ error: { message: "This authorization code has expired.", code: 100 } }), { status: 400 })
+    ));
+    const { exchangeFacebookLoginCode } = await import("../lib/meta/oauth");
+    const err = await exchangeFacebookLoginCode("old", "https://x.test/cb").catch((e: Error) => e);
+    expect(String(err)).toContain("This authorization code has expired.");
+    expect(String(err)).not.toContain("fb-secret-value");
+    vi.unstubAllGlobals();
+  });
+});
