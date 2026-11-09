@@ -192,25 +192,20 @@ export async function probeUnifiedLogin(
     })}`
   );
   const d = dbg.body?.data ?? {};
-  const scopes: { permission: string; target_ids?: string[] }[] = d.granular_scopes ?? [];
-  const igIds = [...new Set(scopes.flatMap((x) => x.target_ids ?? []))];
-  const per = [];
-  for (const id of igIds.slice(0, 2)) {
-    const acct = await q(id, "username,name");
-    const conv = await get(
-      `${fb}/${v}/${id}/conversations?${new URLSearchParams({ platform: "instagram", limit: "1", access_token: token })}`
-    );
-    per.push({
-      id,
-      acct: acct.body?.error ? acct.body.error.message : acct.body?.username,
-      conv: conv.body?.error ? conv.body.error.message : "ok",
-    });
+  const edges: Record<string, string> = {};
+  for (const e of ["me/instagram_accounts", "me/assigned_instagram_accounts", "me/accounts"]) {
+    const r = await q(e, "id,username");
+    edges[e] = r.body?.error
+      ? `err:${r.body.error.message}`.slice(0, 70)
+      : JSON.stringify(r.body?.data ?? r.body).slice(0, 120);
   }
   return JSON.stringify({
     secret: used,
     exp: d.expires_at,
-    scopes: scopes.map((x) => `${x.permission}:${x.target_ids?.length ?? 0}`),
-    per,
+    type: d.type,
+    scopes: d.scopes,
+    granular: JSON.stringify(d.granular_scopes).slice(0, 260),
+    edges,
     dbgErr: dbg.body?.error?.message,
   });
 }
