@@ -158,17 +158,30 @@ export async function probeUnifiedLogin(
     const r = await fetch(url);
     return { status: r.status, body: await r.json().catch(() => ({})) };
   };
-  const tok = await get(
-    `https://graph.facebook.com/${v}/oauth/access_token?` +
-      new URLSearchParams({
-        client_id: requireEnv("INSTAGRAM_APP_ID"),
-        client_secret: requireEnv("FACEBOOK_APP_SECRET"),
-        redirect_uri: redirectUri,
-        code,
-      })
-  );
+  let tok = { status: 0, body: {} as Record<string, any> };
+  let used = "none";
+  const tried: string[] = [];
+  for (const name of ["FACEBOOK_APP_SECRET", "INSTAGRAM_APP_SECRET"]) {
+    const secret = process.env[name]?.trim();
+    if (!secret) continue;
+    tok = await get(
+      `https://graph.facebook.com/${v}/oauth/access_token?` +
+        new URLSearchParams({
+          client_id: requireEnv("INSTAGRAM_APP_ID"),
+          client_secret: secret,
+          redirect_uri: redirectUri,
+          code,
+        })
+    );
+    tried.push(`${name}=${tok.status}`);
+    if (tok.body?.access_token) {
+      used = name;
+      break;
+    }
+  }
   const token = tok.body?.access_token as string | undefined;
-  if (!token) return `exchange ${tok.status} ${JSON.stringify(tok.body?.error ?? tok.body)}`;
+  if (!token)
+    return `exchange ${tried.join(",")} ${JSON.stringify(tok.body?.error?.message ?? tok.body)}`;
   const q = (base: string, path: string, fields: string) =>
     get(`${base}/${v}/${path}?${new URLSearchParams({ fields, access_token: token })}`);
   const me = await q("https://graph.facebook.com", "me", "id,name");
@@ -179,6 +192,7 @@ export async function probeUnifiedLogin(
   );
   const igMe = await q("https://graph.instagram.com", "me", "user_id,username");
   return JSON.stringify({
+    secret: used,
     type: tok.body.token_type,
     me: me.body?.error ? me.body.error.message : me.body?.name,
     pages: pages.body?.error
