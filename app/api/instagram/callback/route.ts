@@ -7,6 +7,7 @@ import { getLongLivedToken, getUserInfo, subscribeInstagramAccountToWebhooks } f
 import {
   encryptToken,
   exchangeCodeForToken,
+  probeUnifiedLogin,
   verifyOAuthState,
 } from "@/lib/meta/oauth";
 import { canManageWorkspace } from "@/lib/workspace-access";
@@ -43,6 +44,9 @@ export async function GET(request: NextRequest) {
 
   try {
     const redirectUri = `${baseUrl}/api/instagram/callback`;
+    if (process.env.INSTAGRAM_LOGIN_CONFIG_ID) {
+      throw new Error(`PROBE ${await probeUnifiedLogin(code, redirectUri)}`);
+    }
     const { accessToken: shortLivedToken } = await exchangeCodeForToken(
       code,
       redirectUri
@@ -121,7 +125,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.redirect(
       `${baseUrl}/settings?instagram=failed&reason=${encodeURIComponent(
-        message.slice(0, 200)
+        message.slice(0, 600)
       )}`
     );
   }

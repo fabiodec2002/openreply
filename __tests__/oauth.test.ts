@@ -85,3 +85,23 @@ describe("OAuth state and token encryption", () => {
     ).toBeNull();
   });
 });
+
+describe("Unified login authorization URL", () => {
+  it("uses the Facebook dialog with config_id when INSTAGRAM_LOGIN_CONFIG_ID is set", async () => {
+    vi.stubEnv("INSTAGRAM_APP_ID", "111");
+    vi.stubEnv("INSTAGRAM_LOGIN_CONFIG_ID", "222");
+    const { getAuthorizationUrl } = await import("../lib/meta/oauth");
+    const url = new URL(getAuthorizationUrl("https://x.test/cb", "st"));
+    expect(url.origin + url.pathname).toBe("https://www.facebook.com/dialog/oauth");
+    expect(url.searchParams.get("config_id")).toBe("222");
+    expect(url.searchParams.get("client_id")).toBe("111");
+    expect(url.searchParams.get("response_type")).toBe("code");
+  });
+
+  it("keeps the Instagram Login URL when the config id is unset", async () => {
+    vi.stubEnv("INSTAGRAM_APP_ID", "111");
+    vi.stubEnv("INSTAGRAM_LOGIN_CONFIG_ID", "");
+    const { getAuthorizationUrl } = await import("../lib/meta/oauth");
+    expect(getAuthorizationUrl("https://x.test/cb", "st")).toContain("instagram.com/oauth/authorize");
+  });
+});

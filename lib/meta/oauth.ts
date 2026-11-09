@@ -88,6 +88,21 @@ export function verifyOAuthState(state: string | null): OAuthStatePayload | null
 }
 
 export function getAuthorizationUrl(redirectUri: string, state: string): string {
+  const configId = process.env.INSTAGRAM_LOGIN_CONFIG_ID;
+  if (configId) {
+    // Newer Meta apps only get Unified login: a Facebook Login for Business
+    // configuration instead of the Instagram Login product.
+    const fb = new URLSearchParams({
+      client_id: requireEnv("INSTAGRAM_APP_ID"),
+      config_id: configId,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      override_default_response_type: "true",
+      state,
+    });
+    return `https://www.facebook.com/dialog/oauth?${fb.toString()}`;
+  }
+
   const params = new URLSearchParams({
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     redirect_uri: redirectUri,
@@ -130,6 +145,50 @@ export async function exchangeCodeForToken(
     accessToken: data.access_token,
     userId: String(data.user_id),
   };
+}
+
+// PROBE: reports what a Unified login code yields, without storing anything.
+// Never includes a token in the output.
+export async function probeUnifiedLogin(
+  code: string,
+  redirectUri: string
+): Promise<string> {
+  const v = process.env.META_GRAPH_API_VERSION ?? "v25.0";
+  const get = async (url: string) => {
+    const r = await fetch(url);
+    return { status: r.status, body: await r.json().catch(() => ({})) };
+  };
+  const tok = await get(
+    `https://graph.facebook.com/${v}/oauth/access_token?` +
+      new URLSearchParams({
+        client_id: requireEnv("INSTAGRAM_APP_ID"),
+        client_secret: requireEnv("FACEBOOK_APP_SECRET"),
+        redirect_uri: redirectUri,
+        code,
+      })
+  );
+  const token = tok.body?.access_token as string | undefined;
+  if (!token) return `exchange ${tok.status} ${JSON.stringify(tok.body?.error ?? tok.body)}`;
+  const q = (base: string, path: string, fields: string) =>
+    get(`${base}/${v}/${path}?${new URLSearchParams({ fields, access_token: token })}`);
+  const me = await q("https://graph.facebook.com", "me", "id,name");
+  const pages = await q(
+    "https://graph.facebook.com",
+    "me/accounts",
+    "name,instagram_business_account{id,username}"
+  );
+  const igMe = await q("https://graph.instagram.com", "me", "user_id,username");
+  return JSON.stringify({
+    type: tok.body.token_type,
+    me: me.body?.error ? me.body.error.message : me.body?.name,
+    pages: pages.body?.error
+      ? pages.body.error.message
+      : (pages.body?.data ?? []).map(
+          (p: { name: string; instagram_business_account?: { id: string; username?: string } }) =>
+            `${p.name}:${p.instagram_business_account?.username ?? "no-ig"}`
+        ),
+    igMe: igMe.body?.error ? igMe.body.error.message : igMe.body?.username,
+  });
 }
 
 function getEncryptionKey(): Buffer {
