@@ -114,7 +114,7 @@ describe("exchangeFacebookLoginCode", () => {
   });
 
   it("exchangeFacebookLoginCode sends the code to graph.facebook.com with FACEBOOK_APP_SECRET and returns the token", async () => {
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = vi.fn(async (_url: string) =>
       new Response(JSON.stringify({ access_token: "sys-token", token_type: "bearer" }), { status: 200 })
     );
     vi.stubGlobal("fetch", fetchMock);

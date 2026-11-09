@@ -7,7 +7,7 @@ import { getLongLivedToken, getUserInfo, subscribeInstagramAccountToWebhooks } f
 import {
   encryptToken,
   exchangeCodeForToken,
-  probeUnifiedLogin,
+  exchangeFacebookLoginCode,
   verifyOAuthState,
 } from "@/lib/meta/oauth";
 import { canManageWorkspace } from "@/lib/workspace-access";
@@ -44,15 +44,20 @@ export async function GET(request: NextRequest) {
 
   try {
     const redirectUri = `${baseUrl}/api/instagram/callback`;
+    let longLivedToken: string;
+    let tokenExpiresAt: Date | null;
     if (process.env.INSTAGRAM_LOGIN_CONFIG_ID) {
-      throw new Error(`PROBE ${await probeUnifiedLogin(code, redirectUri)}`);
+      longLivedToken = await exchangeFacebookLoginCode(code, redirectUri);
+      tokenExpiresAt = null;
+    } else {
+      const { accessToken: shortLivedToken } = await exchangeCodeForToken(
+        code,
+        redirectUri
+      );
+      const longLived = await getLongLivedToken(shortLivedToken);
+      longLivedToken = longLived.accessToken;
+      tokenExpiresAt = new Date(Date.now() + longLived.expiresIn * 1000);
     }
-    const { accessToken: shortLivedToken } = await exchangeCodeForToken(
-      code,
-      redirectUri
-    );
-    const { accessToken: longLivedToken, expiresIn } =
-      await getLongLivedToken(shortLivedToken);
     const userInfo = await getUserInfo(longLivedToken);
     // Webhooks and the messaging API key off the professional account ID
     // (user_id), not the app-scoped `id`. Store user_id so comment webhooks
@@ -71,7 +76,6 @@ export async function GET(request: NextRequest) {
     }
 
     const encryptedToken = encryptToken(longLivedToken);
-    const tokenExpiresAt = new Date(Date.now() + expiresIn * 1000);
 
     let webhookSubscribed = false;
     try {

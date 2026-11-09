@@ -5,7 +5,7 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "crypto";
-import { getEncryptionKeyHex, requireEnv } from "@/lib/env";
+import { getEncryptionKeyHex, getMetaGraphApiVersion, requireEnv } from "@/lib/env";
 
 // Instagram API with Instagram Login authorizes on www.instagram.com. The old
 // api.instagram.com/oauth/authorize host belonged to the retired Basic Display
@@ -147,66 +147,28 @@ export async function exchangeCodeForToken(
   };
 }
 
-// PROBE: reports what a Unified login code yields, without storing anything.
-// Never includes a token in the output.
-export async function probeUnifiedLogin(
+// Unified login returns a Business Integration System User token. It does not
+// expire, so there is no long-lived swap and nothing for the refresh cron.
+export async function exchangeFacebookLoginCode(
   code: string,
   redirectUri: string
 ): Promise<string> {
-  const v = process.env.META_GRAPH_API_VERSION ?? "v25.0";
-  const get = async (url: string) => {
-    const r = await fetch(url);
-    return { status: r.status, body: await r.json().catch(() => ({})) };
-  };
-  let tok = { status: 0, body: {} as Record<string, any> };
-  let used = "none";
-  const tried: string[] = [];
-  for (const name of ["FACEBOOK_APP_SECRET", "INSTAGRAM_APP_SECRET"]) {
-    const secret = process.env[name]?.trim();
-    if (!secret) continue;
-    tok = await get(
-      `https://graph.facebook.com/${v}/oauth/access_token?` +
-        new URLSearchParams({
-          client_id: requireEnv("INSTAGRAM_APP_ID"),
-          client_secret: secret,
-          redirect_uri: redirectUri,
-          code,
-        })
-    );
-    tried.push(`${name}=${tok.status}`);
-    if (tok.body?.access_token) {
-      used = name;
-      break;
-    }
-  }
-  const token = tok.body?.access_token as string | undefined;
-  if (!token)
-    return `exchange ${tried.join(",")} ${JSON.stringify(tok.body?.error?.message ?? tok.body)}`;
-  const fb = "https://graph.facebook.com";
-  const dbg = await get(
-    `${fb}/${v}/debug_token?${new URLSearchParams({
-      input_token: token,
-      access_token: `${requireEnv("INSTAGRAM_APP_ID")}|${process.env[used]!.trim()}`,
-    })}`
+  const url = new URL(
+    `https://graph.facebook.com/${getMetaGraphApiVersion()}/oauth/access_token`
   );
-  const d = dbg.body?.data ?? {};
-  const edges: Record<string, string> = {};
-  const ig = "17841475244855937";
-  const tests: Array<[string, Record<string, string>]> = [
-    [ig, { fields: "id,username" }],
-    [`${ig}/conversations`, { platform: "instagram", fields: "id", limit: "1" }],
-    [`${ig}/media`, { fields: "id,comments_count", limit: "1" }],
-    ["me/assigned_instagram_accounts", { fields: "id,username" }],
-  ];
-  for (const [path, params] of tests) {
-    const r = await get(
-      `${fb}/${v}/${path}?${new URLSearchParams({ ...params, access_token: token })}`
+  url.searchParams.set("client_id", requireEnv("INSTAGRAM_APP_ID"));
+  url.searchParams.set("client_secret", requireEnv("FACEBOOK_APP_SECRET"));
+  url.searchParams.set("redirect_uri", redirectUri);
+  url.searchParams.set("code", code);
+
+  const response = await fetch(url.toString());
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.access_token) {
+    throw new Error(
+      `Token exchange failed: ${data.error?.message ?? `HTTP ${response.status}`}`
     );
-    edges[path.replace(ig, "IG")] = r.body?.error
-      ? `err:${r.body.error.code}:${r.body.error.message}`.slice(0, 110)
-      : JSON.stringify(r.body?.data ?? r.body).slice(0, 120);
   }
-  return JSON.stringify({ type: d.type, edges, dbgErr: dbg.body?.error?.message });
+  return data.access_token;
 }
 
 function getEncryptionKey(): Buffer {
