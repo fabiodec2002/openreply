@@ -182,26 +182,36 @@ export async function probeUnifiedLogin(
   const token = tok.body?.access_token as string | undefined;
   if (!token)
     return `exchange ${tried.join(",")} ${JSON.stringify(tok.body?.error?.message ?? tok.body)}`;
-  const q = (base: string, path: string, fields: string) =>
-    get(`${base}/${v}/${path}?${new URLSearchParams({ fields, access_token: token })}`);
-  const me = await q("https://graph.facebook.com", "me", "id,name");
-  const pages = await q(
-    "https://graph.facebook.com",
-    "me/accounts",
-    "name,instagram_business_account{id,username}"
+  const fb = "https://graph.facebook.com";
+  const q = (path: string, fields: string) =>
+    get(`${fb}/${v}/${path}?${new URLSearchParams({ fields, access_token: token })}`);
+  const dbg = await get(
+    `${fb}/${v}/debug_token?${new URLSearchParams({
+      input_token: token,
+      access_token: `${requireEnv("INSTAGRAM_APP_ID")}|${process.env[used]!.trim()}`,
+    })}`
   );
-  const igMe = await q("https://graph.instagram.com", "me", "user_id,username");
+  const d = dbg.body?.data ?? {};
+  const scopes: { permission: string; target_ids?: string[] }[] = d.granular_scopes ?? [];
+  const igIds = [...new Set(scopes.flatMap((x) => x.target_ids ?? []))];
+  const per = [];
+  for (const id of igIds.slice(0, 2)) {
+    const acct = await q(id, "username,name");
+    const conv = await get(
+      `${fb}/${v}/${id}/conversations?${new URLSearchParams({ platform: "instagram", limit: "1", access_token: token })}`
+    );
+    per.push({
+      id,
+      acct: acct.body?.error ? acct.body.error.message : acct.body?.username,
+      conv: conv.body?.error ? conv.body.error.message : "ok",
+    });
+  }
   return JSON.stringify({
     secret: used,
-    type: tok.body.token_type,
-    me: me.body?.error ? me.body.error.message : me.body?.name,
-    pages: pages.body?.error
-      ? pages.body.error.message
-      : (pages.body?.data ?? []).map(
-          (p: { name: string; instagram_business_account?: { id: string; username?: string } }) =>
-            `${p.name}:${p.instagram_business_account?.username ?? "no-ig"}`
-        ),
-    igMe: igMe.body?.error ? igMe.body.error.message : igMe.body?.username,
+    exp: d.expires_at,
+    scopes: scopes.map((x) => `${x.permission}:${x.target_ids?.length ?? 0}`),
+    per,
+    dbgErr: dbg.body?.error?.message,
   });
 }
 
