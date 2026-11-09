@@ -183,8 +183,6 @@ export async function probeUnifiedLogin(
   if (!token)
     return `exchange ${tried.join(",")} ${JSON.stringify(tok.body?.error?.message ?? tok.body)}`;
   const fb = "https://graph.facebook.com";
-  const q = (path: string, fields: string) =>
-    get(`${fb}/${v}/${path}?${new URLSearchParams({ fields, access_token: token })}`);
   const dbg = await get(
     `${fb}/${v}/debug_token?${new URLSearchParams({
       input_token: token,
@@ -193,21 +191,22 @@ export async function probeUnifiedLogin(
   );
   const d = dbg.body?.data ?? {};
   const edges: Record<string, string> = {};
-  for (const e of ["me/instagram_accounts", "me/assigned_instagram_accounts", "me/accounts"]) {
-    const r = await q(e, "id,username");
-    edges[e] = r.body?.error
-      ? `err:${r.body.error.message}`.slice(0, 70)
+  const ig = "17841475244855937";
+  const tests: Array<[string, Record<string, string>]> = [
+    [ig, { fields: "id,username" }],
+    [`${ig}/conversations`, { platform: "instagram", fields: "id", limit: "1" }],
+    [`${ig}/media`, { fields: "id,comments_count", limit: "1" }],
+    ["me/assigned_instagram_accounts", { fields: "id,username" }],
+  ];
+  for (const [path, params] of tests) {
+    const r = await get(
+      `${fb}/${v}/${path}?${new URLSearchParams({ ...params, access_token: token })}`
+    );
+    edges[path.replace(ig, "IG")] = r.body?.error
+      ? `err:${r.body.error.code}:${r.body.error.message}`.slice(0, 110)
       : JSON.stringify(r.body?.data ?? r.body).slice(0, 120);
   }
-  return JSON.stringify({
-    secret: used,
-    exp: d.expires_at,
-    type: d.type,
-    scopes: d.scopes,
-    granular: JSON.stringify(d.granular_scopes).slice(0, 260),
-    edges,
-    dbgErr: dbg.body?.error?.message,
-  });
+  return JSON.stringify({ type: d.type, edges, dbgErr: dbg.body?.error?.message });
 }
 
 function getEncryptionKey(): Buffer {
