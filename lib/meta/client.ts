@@ -1,7 +1,24 @@
 import { getMetaGraphApiVersion, requireEnv } from "@/lib/env";
 
+// Newer Meta apps only get Unified login (Facebook Login for Business). Its
+// system-user token is refused by graph.instagram.com but works on
+// graph.facebook.com against the Instagram account ID.
+function facebookLoginMode() {
+  return Boolean(process.env.INSTAGRAM_LOGIN_CONFIG_ID);
+}
+
 function instagramGraphBase() {
-  return `https://graph.instagram.com/${getMetaGraphApiVersion()}`;
+  return facebookLoginMode()
+    ? facebookGraphBase()
+    : `https://graph.instagram.com/${getMetaGraphApiVersion()}`;
+}
+
+// In Facebook Login mode `/me` is the system user, not the Instagram account,
+// and the token exposes no edge that lists the account.
+// ponytail: one Instagram account per deploy; read the stored instagramId if
+// a deploy ever needs several.
+function selfPath() {
+  return facebookLoginMode() ? requireEnv("INSTAGRAM_ACCOUNT_ID") : "me";
 }
 
 function facebookGraphBase() {
@@ -665,10 +682,14 @@ export async function getConversationMessages(
 }
 
 export async function getUserInfo(accessToken: string): Promise<InstagramUser> {
-  const url = new URL(`${instagramGraphBase()}/me`);
+  const url = new URL(`${instagramGraphBase()}/${selfPath()}`);
+  // graph.facebook.com has no user_id field; its `id` is already the
+  // professional account ID that webhooks carry.
   url.searchParams.set(
     "fields",
-    "id,user_id,username,name,profile_picture_url,followers_count"
+    facebookLoginMode()
+      ? "id,username,name,profile_picture_url,followers_count"
+      : "id,user_id,username,name,profile_picture_url,followers_count"
   );
   url.searchParams.set("access_token", accessToken);
 
@@ -686,7 +707,7 @@ export async function getUserMedia(
   accessToken: string,
   limit = 25
 ): Promise<InstagramMedia[]> {
-  const url = new URL(`${instagramGraphBase()}/me/media`);
+  const url = new URL(`${instagramGraphBase()}/${selfPath()}/media`);
   url.searchParams.set("fields", MEDIA_FIELDS);
   url.searchParams.set("limit", limit.toString());
   url.searchParams.set("access_token", accessToken);
@@ -708,7 +729,7 @@ export async function getAllUserMedia(
 ): Promise<InstagramMedia[]> {
   const results: InstagramMedia[] = [];
 
-  const first = new URL(`${instagramGraphBase()}/me/media`);
+  const first = new URL(`${instagramGraphBase()}/${selfPath()}/media`);
   first.searchParams.set("fields", MEDIA_FIELDS);
   first.searchParams.set("limit", String(Math.min(MEDIA_PAGE_SIZE, max)));
   first.searchParams.set("access_token", accessToken);

@@ -5,7 +5,7 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "crypto";
-import { getEncryptionKeyHex, requireEnv } from "@/lib/env";
+import { getEncryptionKeyHex, getMetaGraphApiVersion, requireEnv } from "@/lib/env";
 
 // Instagram API with Instagram Login authorizes on www.instagram.com. The old
 // api.instagram.com/oauth/authorize host belonged to the retired Basic Display
@@ -88,6 +88,21 @@ export function verifyOAuthState(state: string | null): OAuthStatePayload | null
 }
 
 export function getAuthorizationUrl(redirectUri: string, state: string): string {
+  const configId = process.env.INSTAGRAM_LOGIN_CONFIG_ID;
+  if (configId) {
+    // Newer Meta apps only get Unified login: a Facebook Login for Business
+    // configuration instead of the Instagram Login product.
+    const fb = new URLSearchParams({
+      client_id: requireEnv("INSTAGRAM_APP_ID"),
+      config_id: configId,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      override_default_response_type: "true",
+      state,
+    });
+    return `https://www.facebook.com/dialog/oauth?${fb.toString()}`;
+  }
+
   const params = new URLSearchParams({
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     redirect_uri: redirectUri,
@@ -130,6 +145,30 @@ export async function exchangeCodeForToken(
     accessToken: data.access_token,
     userId: String(data.user_id),
   };
+}
+
+// Unified login returns a Business Integration System User token. It does not
+// expire, so there is no long-lived swap and nothing for the refresh cron.
+export async function exchangeFacebookLoginCode(
+  code: string,
+  redirectUri: string
+): Promise<string> {
+  const url = new URL(
+    `https://graph.facebook.com/${getMetaGraphApiVersion()}/oauth/access_token`
+  );
+  url.searchParams.set("client_id", requireEnv("INSTAGRAM_APP_ID"));
+  url.searchParams.set("client_secret", requireEnv("FACEBOOK_APP_SECRET"));
+  url.searchParams.set("redirect_uri", redirectUri);
+  url.searchParams.set("code", code);
+
+  const response = await fetch(url.toString());
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.access_token) {
+    throw new Error(
+      `Token exchange failed: ${data.error?.message ?? `HTTP ${response.status}`}`
+    );
+  }
+  return data.access_token;
 }
 
 function getEncryptionKey(): Buffer {
