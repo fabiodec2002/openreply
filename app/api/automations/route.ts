@@ -87,6 +87,15 @@ const createAutomationSchema = z
       (Boolean(d.openingDmMessage?.trim()) &&
         Boolean(d.openingDmButtonLabel?.trim())),
     { message: "Opening DM needs a message and a button label", path: ["openingDmMessage"] }
+  )
+  // The worker silently skips an empty reply pool, and the reconciler then
+  // re-queues the comment every poll.
+  .refine(
+    (d) =>
+      !d.publicReplyEnabled ||
+      d.publicReplyMessages.some((m) => m.trim()) ||
+      Boolean(d.publicReplyMessage?.trim()),
+    { message: "Add at least one public reply, or turn the reply off", path: ["publicReplyMessages"] }
   );
 
 const updateAutomationSchema = z.object({
@@ -540,6 +549,21 @@ export async function PATCH(request: NextRequest) {
   if (automationData.publicReplyEnabled === false) {
     automationData.publicReplyMessages = [];
     automationData.publicReplyMessage = null;
+  }
+  // Checked only when this save touches the reply, so a stored campaign that is
+  // already on-but-empty can still be paused.
+  const next = { ...existing, ...automationData };
+  if (
+    (automationData.publicReplyEnabled !== undefined ||
+      automationData.publicReplyMessages !== undefined) &&
+    next.publicReplyEnabled &&
+    next.publicReplyMessages.length === 0 &&
+    !next.publicReplyMessage?.trim()
+  ) {
+    return NextResponse.json(
+      { success: false, error: "Add at least one public reply, or turn the reply off." },
+      { status: 400 }
+    );
   }
 
   // One transaction, so a save never lands half applied. Updating the campaign
