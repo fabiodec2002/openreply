@@ -5,6 +5,7 @@ import {
   verifyWebhookSignature,
 } from "@/lib/meta/webhook";
 import { processInstagramWebhook } from "@/lib/queue/process-webhook";
+import { relayDmWebhook } from "@/lib/meta/dm-relay";
 
 
 export async function GET(request: NextRequest) {
@@ -60,6 +61,8 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
+
+  void relayDmWebhook(rawBody, signature, payload);
 
   try {
     await processInstagramWebhook({ payload: payload as Parameters<typeof parseCommentEvents>[0], provider: 'META' });
